@@ -23,7 +23,7 @@ name_to_roll = {v: k for k, v in roll_to_name.items()}
 # ✅ Cached fetch — refreshes every 8 hours
 @st.cache_data(ttl=28800)
 def fetch_schedule(sid):
-    url = f"http://acad.xlri.ac.in/aisapp/ai/my-schedule.php?SID={sid}"
+    url = f"https://acad.xlri.ac.in/aisapp/ai/my-schedule.php?SID={sid}"
     response = requests.get(url)
     soup = BeautifulSoup(response.text, 'html.parser')
     schedule = []
@@ -144,3 +144,4 @@ if st.button("Show Schedule"):
                     )
         else:
             st.warning("No schedule data found.")
+
