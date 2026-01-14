@@ -1,9 +1,30 @@
 import streamlit as st
 import requests
+import ssl
+from requests.adapters import HTTPAdapter
+from urllib3.poolmanager import PoolManager
 from bs4 import BeautifulSoup
 import pandas as pd
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
+
+# ---------------- SSL FIX (ONLY CHANGE) ---------------- #
+
+class XLRIAdapter(HTTPAdapter):
+    def init_poolmanager(self, connections, maxsize, block=False):
+        ctx = ssl.create_default_context()
+        ctx.set_ciphers("DEFAULT:@SECLEVEL=1")  # allow weak DH
+        self.poolmanager = PoolManager(
+            num_pools=connections,
+            maxsize=maxsize,
+            block=block,
+            ssl_context=ctx
+        )
+
+session = requests.Session()
+session.mount("https://acad.xlri.ac.in", XLRIAdapter())
+
+# ------------------------------------------------------ #
 
 # Mapping: Roll Number → Name
 roll_to_name = {
@@ -24,7 +45,7 @@ name_to_roll = {v: k for k, v in roll_to_name.items()}
 @st.cache_data(ttl=28800)
 def fetch_schedule(sid):
     url = f"https://acad.xlri.ac.in/aisapp/ai/my-schedule.php?SID={sid}"
-    response = requests.get(url)
+    response = session.get(url, timeout=10)
     soup = BeautifulSoup(response.text, 'html.parser')
     schedule = []
 
@@ -41,8 +62,8 @@ def fetch_schedule(sid):
 
         for i in range(0, len(tds), 3):
             subject = tds[i].text.strip()
-            time = tds[i+1].text.strip()
-            venue = tds[i+2].text.strip()
+            time = tds[i + 1].text.strip()
+            venue = tds[i + 2].text.strip()
             schedule.append({
                 'roll': sid,
                 'date': date_str,
@@ -91,13 +112,11 @@ if st.button("Show Schedule"):
             df = pd.DataFrame(combined)
             df['name'] = df['roll'].map(roll_to_name)
 
-            # Group by (date, subject, time, venue) and collect names
             grouped = defaultdict(list)
             for _, row in df.iterrows():
                 key = (row['date'], row['subject'], row['time'], row['venue'])
                 grouped[key].append(row['name'])
 
-            # Create grouped dataframe
             rows = []
             for (date, subject, time, venue), names in grouped.items():
                 rows.append({
@@ -110,14 +129,14 @@ if st.button("Show Schedule"):
 
             df_grouped = pd.DataFrame(rows)
 
-            # Parse date string like "Wed | 26-06-2025" → datetime.date
             def parse_date(date_str):
                 try:
-                    return datetime.strptime(date_str.split('|')[-1].strip(), "%d-%m-%Y").date()
+                    return datetime.strptime(
+                        date_str.split('|')[-1].strip(), "%d-%m-%Y"
+                    ).date()
                 except:
                     return None
 
-            # Parse time like "04.30 PM" → datetime.time
             def parse_time(time_str):
                 try:
                     return datetime.strptime(time_str, "%I.%M %p").time()
@@ -127,10 +146,9 @@ if st.button("Show Schedule"):
             df_grouped['parsed_date'] = df_grouped['Date'].apply(parse_date)
             df_grouped['parsed_time'] = df_grouped['Time'].apply(parse_time)
 
-            # Filter: show today and all future classes
             today = datetime.today().date()
             df_upcoming = df_grouped[
-                (df_grouped['parsed_date'] >= today)
+                df_grouped['parsed_date'] >= today
             ].sort_values(by=['parsed_date', 'parsed_time', 'Subject'])
 
             if df_upcoming.empty:
@@ -140,8 +158,9 @@ if st.button("Show Schedule"):
                     display_date = group_df["Date"].iloc[0]
                     st.subheader(f"📅 {display_date}")
                     st.dataframe(
-                        group_df.drop(columns=["Date", "parsed_date", "parsed_time"]).reset_index(drop=True)
+                        group_df.drop(
+                            columns=["Date", "parsed_date", "parsed_time"]
+                        ).reset_index(drop=True)
                     )
         else:
             st.warning("No schedule data found.")
-
